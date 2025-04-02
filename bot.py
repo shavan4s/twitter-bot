@@ -2,11 +2,19 @@ import re
 import requests
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
+from aiogram.contrib.middlewares.fsm import FSMContext
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.dispatcher import FSMContext
 
 # تنظیمات تلگرام
-TELEGRAM_BOT_TOKEN = "8099214292:AAHutVvxHK-Y7oOB0psmxu-4ex5RdyjKSFQ"
+TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
-dp = Dispatcher(bot)
+dp = Dispatcher(bot, storage=MemoryStorage())
+
+# تنظیمات FSM
+class Form(StatesGroup):
+    waiting_for_thread_choice = State()
 
 # تابع استخراج آیدی توییت از لینک
 def extract_tweet_id(url):
@@ -52,7 +60,8 @@ async def fetch_tweet(message: types.Message):
         )
 
         # ذخیره وضعیت درخواست در حافظه
-        await bot.set_state(message.chat.id, "waiting_for_thread_choice", tweet_data['url'])
+        await Form.waiting_for_thread_choice.set()
+        await state.update_data(tweet_url=message.text)  # ذخیره لینک توییت
         return
 
     # اگر توییت فقط یک توییت ساده باشد
@@ -70,15 +79,16 @@ async def fetch_tweet(message: types.Message):
         await bot.send_video(message.chat.id, video_url)
 
 # پردازش پاسخ‌های کاربر به سوال "آیا می‌خواهید رشته توییت را دریافت کنید؟"
-@dp.message_handler(state="waiting_for_thread_choice")
-async def handle_thread_choice(message: types.Message):
+@dp.message_handler(state=Form.waiting_for_thread_choice)
+async def handle_thread_choice(message: types.Message, state: FSMContext):
     if message.text.lower() == "بله":
-        tweet_url = message.get_args()  # دریافت لینک توییت اصلی
+        user_data = await state.get_data()
+        tweet_url = user_data['tweet_url']  # دریافت لینک توییت اصلی
         # دریافت تمام توییت‌ها در رشته
         tweet_data = get_tweet_data(tweet_url)
         
         # ارسال توییت‌ها
-        for tweet in tweet_data['thread']:
+        for tweet in tweet_data.get('thread', []):
             tweet_text = tweet['text']
             await message.reply(f"📢 **توییت:**\n\n{tweet_text}", parse_mode="Markdown")
 
@@ -95,6 +105,9 @@ async def handle_thread_choice(message: types.Message):
         await message.reply("❌ از ارسال رشته توییت خودداری شد.")
     else:
         await message.reply("لطفاً فقط `بله` یا `خیر` بنویسید.")
+
+    # پس از اتمام، وضعیت را پاک می‌کنیم
+    await state.finish()
 
 # اجرای ربات
 if __name__ == "__main__":
